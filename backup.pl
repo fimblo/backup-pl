@@ -16,11 +16,12 @@ use DateTime;
    - [X] dry run mode
 
 ** Later
-   - [ ] remote backups
+   - [X] remote backups
    - [ ] should be cron-friendly (logging etc)
    - [ ] can be run with instruction file(s) specifying all source->dest  pairs to back up
 ** Less important features
-   - [ ] silent and verbose mode
+   - [X] silent and verbose mode
+   - [ ] exclude files matching patterns
 
 
 =cut
