@@ -12,12 +12,12 @@ DRYRUN='-n'                                  #skipme
 # DESTINATION=/home/fimblo/tmp/bk/backups/
 SOURCE=/home
 DESTINATION=/mnt/raid/backup
+EXCLUDE='/home/lost+found'
 
 perl /home/fimblo/wc/github/backup-stuff/backup.pl -v0  $DRYRUN\
      -s $SOURCE \
-     -d $DESTINATION
+     -d $DESTINATION \
+     -e $EXCLUDE
 # --------------------------------------------------
 
-# root@squash.yanson.org:/home
-# root@squash.yanson.org:/var/www/html
 

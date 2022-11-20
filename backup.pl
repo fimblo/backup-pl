@@ -18,28 +18,36 @@ use DateTime;
 ** Later
    - [X] remote backups
    - [ ] should be cron-friendly (logging etc)
-   - [ ] can be run with instruction file(s) specifying all source->dest  pairs to back up
+   - [X] can be run with instruction file(s) specifying all source->dest  pairs to back up
 ** Less important features
    - [X] silent and verbose mode
-   - [ ] exclude files matching patterns
+   - [X] exclude files matching pattern
+   - [ ] preserve owner (--owner)
+   - [ ] add --stats for SPAM verbosity
+   - [ ] support excluding multiple patterns
 
 
 =cut
+
+# Get rsync with full path
+my $rsync = get_rsync_or_die();
+
+
+# --------------------------------------------------
+# Vars and constants
 
 # poor man's verbosity enum
 sub QUIET  {0}
 sub NORMAL {1}
 sub SPAM   {2}
 
-# might as well check very early for rsync.
-my $rsync = get_rsync_or_die();
-
-
-
 # backup config file
-my $go_cfg_file = '';
+my $go_cfg_file;
 
-# Batch instructions go here
+# Batch instructions go here.
+# Arref of Arrefs. Each instruction should look like this:
+#  [ srcpath, destpath, exclude ]
+# exclude is optional.
 my $go_backup = [];
 
 # Verbosity level
@@ -54,46 +62,60 @@ my $go_verbosity = '1';
 my $go_dry_run = '0';
 
 # Source to back up from in single-run mode
-my $go_src = '';
+my $go_src;
 
 # Destination to back up to in single-run mode
-my $go_dest = '';
+my $go_dest;
+
+# Glob describing files to exclude from backup in single-run mode
+my $go_excl;
 
 
 # --------------------------------------------------
 # Get commandline arguments
 my @message;
 my $opts = {};
-getopts('hHnv:s:d:f:', $opts);
+getopts('hHnv:s:d:e:f:', $opts);
 
-unless (%$opts) { usage({exit   => 0})       }
+unless (%$opts) { usage({exit => 0}) }
 if (defined($opts->{h})) { usage({exit   => 0})       }
-if (defined($opts->{H})) { more_usage()               }
+if (defined($opts->{H})) { detailed_usage_then_exit() }
 
 if (defined($opts->{n})) { $go_dry_run   = 1          }
 if (defined($opts->{f})) { $go_cfg_file  = $opts->{f} }
 if (defined($opts->{v})) { $go_verbosity = $opts->{v} }
 if (defined($opts->{s})) { $go_src       = $opts->{s} }
 if (defined($opts->{d})) { $go_dest      = $opts->{d} }
-$go_src =~ s|/+\s*$||; $go_dest =~ s|/+\s*$||;
+if (defined($opts->{e})) { $go_excl      = $opts->{e} }
+$go_src =~ s|/+$||; $go_dest =~ s|/+$||;
 
 
 # --------------------------------------------------
 # Check which mode we run in. Single backup or batch.
 my $dt = DateTime->now;
-my $timestamp; # The current time, used to identify this unique backup.
+my $timestamp; # The current time, used to identify this backup session
 $timestamp = join('-', $dt->ymd(''), $dt->hms('')); #YYYYMMDD-HHMMSS
 
-# if (defined($go_cfg_file)) {
-#   digest_config_file($go_cfg_file);
-# } else {
-check_backup_couplet($go_src, $go_dest);
-push @{$go_backup}, ([$go_src, $go_dest]);
-#push @{$go_backup}, ([$go_src, $go_dest]);
-# }
+if (defined($go_cfg_file)) {
+  vprint(SPAM, "Batch mode detected. Reading config file: '$go_cfg_file'\n");
+  digest_config_file($go_cfg_file);
+} else {
+  vprint(SPAM, "Single-run mode detected. Checking -s and -d params.\n");
 
+  unless (defined($go_src) && defined($go_dest)) {
+    usage({
+           msg => 'Aborting: Both source and destination directories needed',
+           exit => 1,
+           no_usage => 1
+          });
+  }
 
+  if (check_dir($go_dest)) {
+    usage({msg => $_, exit => 1, no_usage => 1});
+  }
 
+  push @{$go_backup}, ([$go_src, $go_dest, $go_excl]);
+}
 
 
 
@@ -113,10 +135,12 @@ for my $bk (@$go_backup) {
   my $dest_raw;          # Destination provided by user
   my $real_dest;         # The actual destination - $dest_raw suffixed
                          # with tag and timestamp
+  my $exclude;
   my $round = @commands;
 
   $source_raw = $bk->[0];
   $dest_raw   = $bk->[1];
+  $exclude    = $bk->[2];
 
   # Separate the (optional) user@hostname from the directory portion of
   # the Source input.
@@ -128,6 +152,7 @@ for my $bk (@$go_backup) {
     chomp $source_system;
     $source_dir = $source_raw;
   }
+
 
   # Create this source's unique tag to mark the destination with This
   # way, we know where to hard link from if this source is re-used in
@@ -167,20 +192,23 @@ for my $bk (@$go_backup) {
 
   # assemble the rsync command
   my $link_dest = "--link-dest ../$newest_existing_backup";
-  my $command = join (' ',
-                      $rsync,
-                      '-a',
-                      ($go_verbosity == SPAM  ) ? '-v'       : '',
-                      ($go_dry_run   == 1     ) ? '-n'       : '',
-                      ($newest_existing_backup) ? $link_dest : '',
-                      "$source_raw/",
-                      $real_dest
-                     );
+  my $command =
+    join (' ',
+          $rsync,
+          '-a',
+          ($go_verbosity == SPAM)   ? '-v'                   : '',
+          ($newest_existing_backup) ? $link_dest             : '',
+          ($go_dry_run)             ? '-n'                   : '',
+          ($exclude)                ? "--exclude='$exclude'" : '',
+          "$source_raw/",
+          $real_dest
+         );
 
 
   # Gather all info for the user to eyeball
   my $msg_dry_run = ($go_dry_run) ? '(dry) ' : '';
-  push @messages, "Round $round $msg_dry_run$source_raw $real_dest\n";
+  my $msg_exclude = ($exclude) ? " E:$exclude" : '';
+  push @messages, "Round $round ${msg_dry_run}S:${source_raw} D:${real_dest}$msg_exclude\n";
 
   my $msg_recent = $newest_existing_backup;
   unless ($newest_existing_backup) {
@@ -222,24 +250,59 @@ if ($go_dry_run) {
 
 # --------------------------------------------------
 # Do all the rsyncs
+vprint(NORMAL, "Proceeding with backups.\n");
+my $round = 0;
 for my $command (@commands) {
+  vprint(NORMAL, "Round $round: ");
   vprint(NORMAL, "$command\n");
+
+
+
   my $retval = qx/$command 2>&1/;
-  print $retval;
+  vprint(NORMAL, $retval);
+
+  if ($? == 0) {
+    # all good
+  } elsif ($? == -1) {
+    print "Round: $round, Error: failed to execute: $!\n";
+    vprint(QUIET, "Rsync command: $command\n");
+  } elsif ($? & 127) {
+    printf "Round: $round, Error: rsync died with signal %d, %s coredump\n",
+      ($? & 127),  ($? & 128) ? 'with' : 'without';
+    vprint(QUIET, "Rsync command: $command\n");
+  } else {
+    printf "Round: $round, Error: rsync exited with value %d\n", $? >> 8;
+    vprint(QUIET, "Rsync command: $command\n");
+  }
+
+  $round++;
 }
+
+
 
 
 
 # --------------------------------------------------
 # subs
 
+# printing with 0 will show on levels 0, 1 and 2 (QUIET).
+# printing with 1 will show on levels 1 and 2 (NORMAL).
+# printing with 2 will show only on level 2 (SPAM)
 sub vprint {
   my $v_lvl = shift;
-  my $msg = shift;
+  my $msg   = shift;
 
   if ($v_lvl <= $go_verbosity) { print $msg }
 }
 
+sub check_dir {
+  my $dir = shift;
+  my $msg;
+  if (! -e $dir)    { $msg = "Aborting: '$dir' not found.\n";         }
+  elsif (! -d $dir) { $msg = "Aborting: '$dir' isn't a directory.\n"; }
+  elsif (! -r $dir) { $msg = "Aborting: '$dir' is not readable.\n";   }
+  return $msg;
+}
 
 
 sub usage {
@@ -248,7 +311,7 @@ sub usage {
   unless (defined($p->{no_usage})) {
     print<<"_USAGE_";
 USAGE
-  backup.pl  {{-s <src-dir> -d <dest-dir>}|{-f <config-file>}}
+  backup.pl  {{-s <src-dir> -d <dest-dir> [-e 'pattern']}|{-f <config-file>}}
              [-v {0|1|2}] [-n] [-h] [-H]
 
     -h    usage. This text.
@@ -259,19 +322,21 @@ USAGE
           1 = default
           2 = spammy
 
-    -s <src-dir> -d <dest-dir>
+    -s <src-dir> -d <dest-dir> [-e 'pattern']
           One-off mode.
 
           Back up src-dir to dest-dir, checking for earlier versions to
           hard link to. Then exit.
 
-    -f <config-file>
-          File location of backup instructions. Contents should have one
-          backup instruction per line, with source directory and
-          destination directory, whitespace separated.
+          Optionally, -e will allow filenames matching the glob (3)
+          pattern to be excluded from the backup.
 
-          Using this argument will override any (-s/-d) args.
+     -f <config-file>
+           File location of backup instructions. Using this argument
+           will override any (-s/-d) args. See -H for more details.
 _USAGE_
+
+
 
   }
   (defined($p->{msg}))  && print $p->{msg} . "\n";
@@ -279,7 +344,7 @@ _USAGE_
 }
 
 
-sub more_usage {
+sub detailed_usage_then_exit {
   print<<"_USAGE_";
 NOTE ON THE BACKUP SOURCE
   The source may be local or remote. Valid examples:
@@ -308,41 +373,61 @@ NOTE ON BACKUP CONFIG FILE FORMAT
   - Empty lines are ignored
   - One command supported: BACKUP
   - All args to BACKUP are whitespace separated (tab or space)
+  - See config examples in the file example-config.cfg
+  - exclude patterns follow the rules specified in section
+    INCLUDE/EXCLUDE PATTERN RULES in the rsync man page.
 
    Example file:
    # This is a comment
    BACKUP /path/to/src         /path/to/dest
-   BACKUP /path/to/another/src /path/to/dest
+   BACKUP /path/to/another/src /path/to/dest    exclude_this_pattern
 
 _USAGE_
   exit (0);
 }
 
 
-sub check_backup_couplet {
-  my $source = shift;
-  my $dest = shift;
 
-  unless (defined($source) && defined($dest)) {
-    usage({
-           msg => 'Both source and destination directories needed',
-           exit => 1,
-           no_usage => 1
-          });
+
+sub digest_config_file {
+  my $cfg_file = shift;
+
+  open (my $FH, '<', $cfg_file) || die "Aborting: Can't open config file '$cfg_file'\n";
+  my @cfg_rows = <$FH>;
+  close $FH;
+
+  my @msg;
+  for (my $i = 0; $i < @cfg_rows; $i++) {
+    my $line = $cfg_rows[$i];
+    chomp $line;
+    next if ($line !~ /./);
+    next if ($line =~ /^#/);
+
+    my ($cmd, $s, $d, $e) = split(/\s+/, $line);
+    my $cl = $i+1;
+    if ($cmd ne 'BACKUP') {
+      push @msg, "Line $cl: Command '$cmd' not recognised.\n";
+    }
+    unless ($s =~ /./) {
+      push @msg, "Line $cl: Source dir missing.\n";
+    }
+    unless ($d =~ /./) {
+      push @msg, "Line $cl: Destination dir missing.\n";
+    }
+
+    if (my $retval = check_dir($d)) {
+      vprint(QUIET, "Line: $cl: ");
+      usage({msg => $retval, exit => 1, no_usage => 1});
+    }
+    push @{$go_backup}, ([$s, $d, $e]);
   }
 
-  # Only check destination directory, since source might be remote anyway
-  my $msg;
-  if (! -e $dest) { $msg = "Error: '$dest' not found.";         }
-  elsif (! -d $dest) { $msg = "Error: '$dest' isn't a directory."; }
-  elsif (! -r $dest) { $msg = "Error: '$dest' is not readable.";   }
-
-  if ($msg) {
-    usage({msg => $msg, exit => 1, no_usage => 1});
+  if (@msg) {
+    print for @msg;
+    print "Aborting: Run with -H for detailed info on backup config file format.\n";
+    exit(1);
   }
-
 }
-
 
 
 sub get_rsync_or_die {
@@ -356,3 +441,4 @@ sub get_rsync_or_die {
     die;
   }
 }
+
