@@ -22,7 +22,6 @@ use DateTime;
 ** Less important features
    - [X] silent and verbose mode
    - [X] exclude files matching pattern
-   - [ ] preserve owner (--owner)
    - [ ] add --stats for SPAM verbosity
    - [ ] --one-file-system support
    - [X] support excluding multiple patterns
