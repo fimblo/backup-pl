@@ -24,7 +24,8 @@ use DateTime;
    - [X] exclude files matching pattern
    - [ ] preserve owner (--owner)
    - [ ] add --stats for SPAM verbosity
-   - [ ] support excluding multiple patterns
+   - [ ] --one-file-system support
+   - [X] support excluding multiple patterns
 
 
 =cut
@@ -46,8 +47,12 @@ my $go_cfg_file;
 
 # Batch instructions go here.
 # Arref of Arrefs. Each instruction should look like this:
-#  [ srcpath, destpath, exclude ]
-# exclude is optional.
+#    {
+#        src => srcpath,
+#        dst => dstpath,
+#        exclude_pat => pattern,
+#        exclude_file => path/to/file
+#    }
 my $go_backup = [];
 
 # Verbosity level
@@ -67,15 +72,17 @@ my $go_src;
 # Destination to back up to in single-run mode
 my $go_dest;
 
-# Glob describing files to exclude from backup in single-run mode
-my $go_excl;
+# Pattern describing files to exclude from backup in single-run mode
+my $go_excl_pat;
 
+# File containing patterns to exclude from backup
+my $go_excl_file;
 
 # --------------------------------------------------
 # Get commandline arguments
 my @message;
 my $opts = {};
-getopts('hHnv:s:d:e:f:', $opts);
+getopts('hHnv:s:d:e:E:f:', $opts);
 
 unless (%$opts) { usage({exit => 0}) }
 if (defined($opts->{h})) { usage({exit   => 0})       }
@@ -86,7 +93,8 @@ if (defined($opts->{f})) { $go_cfg_file  = $opts->{f} }
 if (defined($opts->{v})) { $go_verbosity = $opts->{v} }
 if (defined($opts->{s})) { $go_src       = $opts->{s} }
 if (defined($opts->{d})) { $go_dest      = $opts->{d} }
-if (defined($opts->{e})) { $go_excl      = $opts->{e} }
+if (defined($opts->{e})) { $go_excl_pat  = $opts->{e} }
+if (defined($opts->{E})) { $go_excl_file = $opts->{E} }
 $go_src =~ s|/+$||; $go_dest =~ s|/+$||;
 
 
@@ -97,10 +105,11 @@ my $timestamp; # The current time, used to identify this backup session
 $timestamp = join('-', $dt->ymd(''), $dt->hms('')); #YYYYMMDD-HHMMSS
 
 if (defined($go_cfg_file)) {
-  vprint(SPAM, "Batch mode detected. Reading config file: '$go_cfg_file'\n");
+  vprint(SPAM, "Batch mode detected. Ignoring -s, -d and -e options\n");
+  vprint(SPAM, "Reading config file: '$go_cfg_file'\n");
   digest_config_file($go_cfg_file);
 } else {
-  vprint(SPAM, "Single-run mode detected. Checking -s and -d params.\n");
+  vprint(SPAM, "Single-run mode detected. Checking -s, -d and -e options.\n");
 
   unless (defined($go_src) && defined($go_dest)) {
     usage({
@@ -114,7 +123,11 @@ if (defined($go_cfg_file)) {
     usage({msg => $_, exit => 1, no_usage => 1});
   }
 
-  push @{$go_backup}, ([$go_src, $go_dest, $go_excl]);
+  push @{$go_backup}, ({src => $go_src,
+                        dst => $go_dest,
+                        exclude_pat => $go_excl_pat,
+                        exclude_file  => $go_excl_file
+                       })
 }
 
 
@@ -135,12 +148,22 @@ for my $bk (@$go_backup) {
   my $dest_raw;          # Destination provided by user
   my $real_dest;         # The actual destination - $dest_raw suffixed
                          # with tag and timestamp
-  my $exclude;
+  my $exclude_pat;
+  my $exclude_file;
   my $round = @commands;
 
-  $source_raw = $bk->[0];
-  $dest_raw   = $bk->[1];
-  $exclude    = $bk->[2];
+  $source_raw   = $bk->{src};
+  $dest_raw     = $bk->{dst};
+  $exclude_pat  = $bk->{exclude_pat};
+  $exclude_file = $bk->{exclude_file};
+
+  # if exclude file is specified, remove any exclusion patterns
+  if ($exclude_file) {
+    if ($exclude_pat) {
+      vprint(NORMAL, "Ignoring exclude pattern in favour of exclude file.\n");
+    }
+    undef $exclude_pat;
+  }
 
   # Separate the (optional) user@hostname from the directory portion of
   # the Source input.
@@ -165,13 +188,13 @@ for my $bk (@$go_backup) {
 
   # Check if there is a previous backup inside this unique tag to hard
   # link from
-  my $newest_existing_backup;
+  my $prev_backup;
   if (-d "$dest_raw/$unique_tag") {
     opendir(my $D, "$dest_raw/$unique_tag") || die $!;
     my @d_rows = reverse sort readdir($D);
     for my $row (@d_rows) {
       if ($row =~ m|\d{8}-\d{6}|) {
-        $newest_existing_backup = $row;
+        $prev_backup = $row;
         last;
       }
     }
@@ -190,16 +213,22 @@ for my $bk (@$go_backup) {
   }
 
 
-  # assemble the rsync command
-  my $link_dest = "--link-dest ../$newest_existing_backup";
+  # Assemble the rsync command
+  my $exclude;
+  if ($exclude_file) {
+    $exclude = "--exclude-from=$exclude_file";
+  } elsif ($exclude_pat) {
+    $exclude =  "--exclude='$exclude_pat'";
+  }
+  my $link_dest = "--link-dest ../$prev_backup";
   my $command =
     join (' ',
           $rsync,
           '-a',
-          ($go_verbosity == SPAM)   ? '-v'                   : '',
-          ($newest_existing_backup) ? $link_dest             : '',
-          ($go_dry_run)             ? '-n'                   : '',
-          ($exclude)                ? "--exclude='$exclude'" : '',
+          ($go_verbosity == SPAM) ? '-v'       : '',
+          ($prev_backup)          ? $link_dest : '',
+          ($go_dry_run)           ? '-n'       : '',
+          ($exclude)              ? $exclude   : '',
           "$source_raw/",
           $real_dest
          );
@@ -207,23 +236,33 @@ for my $bk (@$go_backup) {
 
   # Gather all info for the user to eyeball
   my $msg_dry_run = ($go_dry_run) ? '(dry) ' : '';
-  my $msg_exclude = ($exclude) ? " E:$exclude" : '';
+  my $msg_exclude;
+  my $msg_exclude_long = ':         -- none --';
+  if ($exclude_file) {
+    $msg_exclude = " EF:$exclude_file";
+    $msg_exclude_long = " file:    '$exclude_file'";
+  } elsif ($exclude_pat) {
+    $msg_exclude = " E:$exclude_pat";
+    $msg_exclude_long = " pattern: '$exclude_pat'";
+  }
   push @messages, "Round $round ${msg_dry_run}S:${source_raw} D:${real_dest}$msg_exclude\n";
 
-  my $msg_recent = $newest_existing_backup;
-  unless ($newest_existing_backup) {
+  my $msg_recent = $prev_backup;
+  unless ($prev_backup) {
     $msg_recent = "NO PRIOR BACKUP.";
   }
   my $msg = <<"_INFO_";
 Round $round backup.pl info
 Round $round
-Round $round Source system: $source_system
-Round $round Source dir:    $source_dir
-Round $round Full source:   $source_raw
+Round $round Source system:   $source_system
+Round $round Source dir:      $source_dir
+Round $round Full source:     $source_raw
 Round $round
-Round $round Backup root:   $dest_raw/
-Round $round Backup space:  $dest_raw/$unique_tag
-Round $round Full target:   $real_dest
+Round $round Backup root:     $dest_raw/
+Round $round Backup space:    $dest_raw/$unique_tag
+Round $round Full target:     $real_dest
+Round $round
+Round $round Exclude$msg_exclude_long
 Round $round
 Round $round Prior backup to hardlink from: $msg_recent
 
@@ -298,7 +337,7 @@ sub vprint {
 sub check_dir {
   my $dir = shift;
   my $msg;
-  if (! -e $dir)    { $msg = "Aborting: '$dir' not found.\n";         }
+  if (! -e $dir) { $msg = "Aborting: '$dir' not found.\n";         }
   elsif (! -d $dir) { $msg = "Aborting: '$dir' isn't a directory.\n"; }
   elsif (! -r $dir) { $msg = "Aborting: '$dir' is not readable.\n";   }
   return $msg;
@@ -403,7 +442,7 @@ sub digest_config_file {
     next if ($line !~ /./);
     next if ($line =~ /^#/);
 
-    my ($cmd, $s, $d, $e) = split(/\s+/, $line);
+    my ($cmd, $s, $d, $ef) = split(/\s+/, $line);
     my $cl = $i+1;
     if ($cmd ne 'BACKUP') {
       push @msg, "Line $cl: Command '$cmd' not recognised.\n";
@@ -419,7 +458,7 @@ sub digest_config_file {
       vprint(QUIET, "Line: $cl: ");
       usage({msg => $retval, exit => 1, no_usage => 1});
     }
-    push @{$go_backup}, ([$s, $d, $e]);
+    push @{$go_backup}, ({src => $s, dst => $d, exclude_file => $ef});
   }
 
   if (@msg) {
@@ -427,6 +466,7 @@ sub digest_config_file {
     print "Aborting: Run with -H for detailed info on backup config file format.\n";
     exit(1);
   }
+
 }
 
 
@@ -441,4 +481,3 @@ sub get_rsync_or_die {
     die;
   }
 }
-
