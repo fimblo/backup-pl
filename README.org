@@ -8,7 +8,7 @@ then it turned into this monster.
 At one point I realised that I could probably write something more
 flexible and easier to get an overview of in bash.
 
-That other project is the one I ended up using.
+[[https://github.com/fimblo/backup-sh][That other project]] is the one I ended up using.
 
 ** Usage
 #+begin_src shell
