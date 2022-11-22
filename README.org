@@ -1,4 +1,5 @@
-* Why I wrote this
+* backup.pl
+** Why I wrote this
 I actually just wanted to [[https://github.com/WayneD/rsync][rsync]] stuff to my raid partition, using the
 [[https://download.samba.org/pub/rsync/rsync.1#opt--link-dest][link-dest]] feature of rsync. Thought it would be nice way to do
 complete backups, yet save space. I started writing a small script,
@@ -9,7 +10,7 @@ flexible and easier to get an overview of in bash.
 
 That other project is the one I ended up using.
 
-* USAGE
+** Usage
 #+begin_src shell
   backup.pl  {{-s <src-dir> -d <dest-dir> [-e 'pattern']}|{-f <config-file>}}
              [-v {0|1|2}] [-n] [-h] [-H]
@@ -36,7 +37,7 @@ That other project is the one I ended up using.
            will override any (-s/-d) args. See -H for more details.
 #+end_src
 
-* NOTE ON THE BACKUP SOURCE
+** Note on the backup source
   The source may be local or remote. Valid examples:
 
   #+begin_example
@@ -45,11 +46,11 @@ That other project is the one I ended up using.
   user@myhostname:/home/user/stuffs
   #+end_example
 
-* NOTE ON THE BACKUP DESTINATION
+** Note on the backup destination
   The destination directory must be local. This code does not support
   backing up to a remote directory.
 
-* NOTE ON DESTINATION DIR STRUCTURE
+** Note on destination dir structure
   If the following holds:
 
   #+begin_example
@@ -62,7 +63,7 @@ That other project is the one I ended up using.
   Then, this script will save the files contained in /home/user/datadir/
   here: =/mnt/data/user\@server--home-user-datadir/221117-232301/=
 
-* NOTE ON BACKUP CONFIG FILE FORMAT
+** Note on backup config file format
   - Lines beginning with '#' are considered comments and are ignored
   - Empty lines are ignored
   - One command supported: BACKUP
