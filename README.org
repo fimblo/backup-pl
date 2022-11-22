@@ -61,7 +61,7 @@ That other project is the one I ended up using.
   #+end_example
 
   Then, this script will save the files contained in /home/user/datadir/
-  here: =/mnt/data/user\@server--home-user-datadir/221117-232301/=
+  here: =/mnt/data/user@server--home-user-datadir/221117-232301/=
 
 ** Note on backup config file format
   - Lines beginning with '#' are considered comments and are ignored
