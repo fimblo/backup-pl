@@ -1,9 +1,7 @@
 #!/usr/bin/env perl
-use strict;
-#no strict 'refs';
-
 use Getopt::Std;
 use DateTime;
+use strict;
 
 
 =pod
@@ -22,10 +20,8 @@ use DateTime;
 ** Less important features
    - [X] silent and verbose mode
    - [X] exclude files matching pattern
-   - [ ] add --stats for SPAM verbosity
    - [ ] --one-file-system support
    - [X] support excluding multiple patterns
-
 
 =cut
 
