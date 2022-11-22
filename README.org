@@ -1,0 +1,80 @@
+* Why I wrote this
+I actually just wanted to [[https://github.com/WayneD/rsync][rsync]] stuff to my raid partition, using the
+[[https://download.samba.org/pub/rsync/rsync.1#opt--link-dest][link-dest]] feature of rsync. Thought it would be nice way to do
+complete backups, yet save space. I started writing a small script,
+then it turned into this monster.
+
+At one point I realised that I could probably write something more
+flexible and easier to get an overview of in bash.
+
+That other project is the one I ended up using.
+
+* USAGE
+#+begin_src shell
+  backup.pl  {{-s <src-dir> -d <dest-dir> [-e 'pattern']}|{-f <config-file>}}
+             [-v {0|1|2}] [-n] [-h] [-H]
+
+    -h    usage. This text.
+    -H    more info on this script.
+    -n    dry-run. Show stuff but do nothing
+    -v    verbosity
+          0 = silent
+          1 = default
+          2 = spammy
+
+    -s <src-dir> -d <dest-dir> [-e 'pattern']
+          One-off mode.
+
+          Back up src-dir to dest-dir, checking for earlier versions to
+          hard link to. Then exit.
+
+          Optionally, -e will allow filenames matching the glob (3)
+          pattern to be excluded from the backup.
+
+     -f <config-file>
+           File location of backup instructions. Using this argument
+           will override any (-s/-d) args. See -H for more details.
+#+end_src
+
+* NOTE ON THE BACKUP SOURCE
+  The source may be local or remote. Valid examples:
+
+  #+begin_example
+  /mnt/some/directory
+  myhostname:/mnt/some/dir
+  user@myhostname:/home/user/stuffs
+  #+end_example
+
+* NOTE ON THE BACKUP DESTINATION
+  The destination directory must be local. This code does not support
+  backing up to a remote directory.
+
+* NOTE ON DESTINATION DIR STRUCTURE
+  If the following holds:
+
+  #+begin_example
+  /home/user/datadir/ is where we can find the files we want to back up
+  /mnt/data           is where to back the stuff up to
+  user@server         is the host where the source data is
+  221117-232301       is the datetime of the backup
+  #+end_example
+
+  Then, this script will save the files contained in /home/user/datadir/
+  here: =/mnt/data/user\@server--home-user-datadir/221117-232301/=
+
+* NOTE ON BACKUP CONFIG FILE FORMAT
+  - Lines beginning with '#' are considered comments and are ignored
+  - Empty lines are ignored
+  - One command supported: BACKUP
+  - All args to BACKUP are whitespace separated (tab or space)
+  - See config examples in the file example-config.cfg
+  - exclude patterns follow the rules specified in section
+    INCLUDE/EXCLUDE PATTERN RULES in the rsync man page.
+
+   Example file:
+   
+   #+begin_src conf
+   # This is a comment
+   BACKUP /path/to/src         /path/to/dest
+   BACKUP /path/to/another/src /path/to/dest    exclude_this_pattern
+   #+end_src
